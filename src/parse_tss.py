@@ -1,5 +1,5 @@
 import requests
-from datetime import datetime
+from datetime import datetime, timezone
 
 from brackets import Match, render_double_elim
 
@@ -52,7 +52,7 @@ def fetch_game_match_winners(tournament_id: int, match_id: int, total_score: dic
 		metrics = deaths_metrics[i]
 		game_winnner = team1 if metrics[team1] < metrics[team2] else team2
 		results[i] = game_winnner
-		print(i, results)
+		print('solving winner', i, results)
 		accounted[game_winnner] += 1
 
 		# set reamining games winner to other team
@@ -69,6 +69,27 @@ def fetch_game_match_winners(tournament_id: int, match_id: int, total_score: dic
 
 	return results
 
+def fetch_match_info(tournament_id: int, match_id: int):
+	print(f'fetching match {match_id} info')
+	res = requests.get(TSS_API, {
+		"tournamentID": str(tournament_id),
+		"idMatch": str(match_id),
+		"action": "getInfoMatch"
+	})
+
+	if res.status_code != 200:
+		raise Exception(f'Failed fetching match results: {match_id}')
+	
+	data = res.json()
+	data = data["data"]
+
+	start_ts = data["allBattleTime"][0]["timeStart"]
+	time = datetime.fromtimestamp(start_ts, tz=timezone.utc)
+
+	map_key = data["matchParametrs"]["mission"][0]["key"]
+	
+	return time, map_key
+
 def parse_match(tournament_id: int, data: dict):
 	teams: list[str] = [data["realNameA"], data["realNameB"]]
 	scores = [int(data["scoreA"]), int(data["scoreB"])]
@@ -83,7 +104,9 @@ def parse_match(tournament_id: int, data: dict):
 		dscores = dict(zip(teams, scores))
 		results = fetch_game_match_winners(tournament_id, match_id, dscores, type_bracket)
 
-	return Match(teams, results, "")
+	time, map_name = fetch_match_info(tournament_id, match_id)
+
+	return Match(time, teams, results, map_name)
 
 def fetch_bracket(tournament_id: int, truncate=16):
 	res = requests.post(TSS_API, {
@@ -97,7 +120,7 @@ def fetch_bracket(tournament_id: int, truncate=16):
 	data = res.json()
 	data = data['data']['bracket']
 
-	upper = [ *data['match_winner']['match_winner'], *data['match_winner']['Final'] ]
+	upper = [ *data['winner']['Winner'], *data['winner']['Final'] ]
 	lower = [ *data['loser']['Looser'], *data['loser']['LooserFinal'], *data['loser']['Semifinal'] ]
 
 	upper = [[parse_match(tournament_id, mt) for mt in rnd] for rnd in upper if len(rnd) <= truncate]
@@ -106,9 +129,8 @@ def fetch_bracket(tournament_id: int, truncate=16):
 	return upper, lower
 
 def test():
-	fetch_match_info(24019, 848241)
-	# text = render_double_elim(*fetch_bracket(24019, truncate=8))
-	# with open('out.txt', 'w') as f:
-	# 	f.write(text)
+	text = render_double_elim(24019, *fetch_bracket(24019, truncate=16))
+	with open('out.txt', 'w') as f:
+		f.write(text)
 
 test()
